@@ -9,6 +9,21 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import GraphVisualization from '../components/GraphVisualization';
 
+// detects the format based on 
+function detectQuestionFormat(question: string): "tf" | "mcq" | null {
+  const q = question.toLowerCase();
+  if (
+    q.includes("true or false") ||
+    q.startsWith("true/false")
+  ) {
+    return "tf";
+  }
+  if (/\b(a\)|b\)|c\)|d\))/i.test(q)) {
+    return "mcq";
+  }
+  return null;
+}
+
 interface Message {
   id: string;
   content: string;
@@ -25,6 +40,7 @@ interface Message {
     correctAnswer: string;
     questionIndex?: number;
     totalQuestions?: number;
+    format?: "tf" | "mcq" | null;
   };
 }
 
@@ -55,6 +71,7 @@ function App() {
   const [loadingDots, setLoadingDots] = useState('');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
   const [isAnswering, setIsAnswering] = useState<boolean>(false);
+  const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
 
   const navigate = useNavigate();
@@ -294,7 +311,8 @@ function App() {
             setQaData(qaResponseData.qa_pairs);
             setCurrentQuestionIndex(0);
             setIsAnswering(true);
-            
+
+            const detectedFormat = detectQuestionFormat(qaResponseData.qa_pairs[0].question);
             // Show the first question
             const firstQuestionMessage: Message = {
               id: Date.now().toString(),
@@ -306,7 +324,8 @@ function App() {
                 question: qaResponseData.qa_pairs[0].question,
                 correctAnswer: qaResponseData.qa_pairs[0].answer,
                 questionIndex: 0,
-                totalQuestions: qaResponseData.qa_pairs.length
+                totalQuestions: qaResponseData.qa_pairs.length,
+                format: detectedFormat
               }
             };
 
@@ -318,6 +337,7 @@ function App() {
                   }
                 : chat
             ));
+            setActiveQuestion(firstQuestionMessage.id);
 
             await axios.post('http://localhost:4000/chat/message', {
               chat_id: currentChatId,
@@ -442,6 +462,8 @@ function App() {
         if (verificationResult.isCorrect) {
           // If answer is correct and there are more questions, show the next one
           if (qaData.length > currentQuestionIndex + 1) {
+            const nextIndex = currentQuestionIndex + 1;
+            const detectedFormat = detectQuestionFormat(qaData[nextIndex].question);
             const nextQuestionMessage: Message = {
               id: Date.now().toString(),
               content: `Correct! Let's move on to the next question:\n\n${qaData[currentQuestionIndex + 1].question}`,
@@ -452,7 +474,8 @@ function App() {
                 question: qaData[currentQuestionIndex + 1].question,
                 correctAnswer: qaData[currentQuestionIndex + 1].answer,
                 questionIndex: currentQuestionIndex + 1,
-                totalQuestions: qaData.length
+                totalQuestions: qaData.length,
+                format: detectedFormat
               }
             };
 
@@ -471,6 +494,7 @@ function App() {
                   }
                 : chat
             ));
+            setActiveQuestion(nextQuestionMessage.id);
 
             // Save both feedback and next question to backend
             await axios.post('http://localhost:4000/chat/message', {
@@ -512,6 +536,8 @@ function App() {
             }, { withCredentials: true });
 
             setIsAnswering(false);
+            setActiveQuestion(null);
+
           }
         } else {
           // If answer is incorrect, show feedback and follow-up
@@ -764,6 +790,8 @@ function App() {
       setGraphData(null);
       setQaData([]);
       setIsAnswering(false);
+      setActiveQuestion(null);
+
     }
 
     // Cleanup function
@@ -966,7 +994,27 @@ function App() {
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Type your message..."
+                  onKeyDown={(e) => {
+                    if (isTyping) return; 
+                    if (!activeQuestion) return;
+                    const activeMsg = currentChat.messages.find(m => m.id === activeQuestion);
+                    const format = activeMsg?.questionData?.format;
+                    const key = e.key.toLowerCase();
+                    if ((format === "tf" && ["t", "f"].includes(key)) || (format === "mcq" && ["a", "b", "c", "d"].includes(key))) {
+                      e.preventDefault();
+                      setInput(key);
+                      setTimeout(() => {
+                        const fakeEvent = { preventDefault: () => {} } as any;
+                        handleSubmit(fakeEvent);
+                      }, 100);
+                    }
+                  }}
+                  placeholder={
+                    isTyping ? "Grading your answer..."
+                    : activeQuestion ? "Type your answer..."
+                    : "Type your message..."
+                  }
+                  disabled={isTyping}
                   className="flex-1 px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent placeholder-gray-400"
                 />
                 <input
